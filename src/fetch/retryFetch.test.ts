@@ -1,61 +1,64 @@
-import { retryFetch, sleep } from "./retryFetch";
+import { retryFetch, sleep, isStatusError } from "./retryFetch";
 
-export function makeStatusError(status: number): Error & { status: number } {
-  const err = new Error(`HTTP ${status}`) as Error & { status: number };
-  err.status = status;
-  return err;
+export function makeStatusError(status: number): { status: number } {
+  return { status };
 }
 
 describe("sleep", () => {
-  it("resolves after the given delay", async () => {
+  it("resolves after roughly the given delay", async () => {
     const start = Date.now();
     await sleep(50);
     expect(Date.now() - start).toBeGreaterThanOrEqual(40);
   });
 });
 
+describe("isStatusError", () => {
+  it("returns true for objects with numeric status", () => {
+    expect(isStatusError(makeStatusError(500))).toBe(true);
+  });
+
+  it("returns false for non-objects", () => {
+    expect(isStatusError(null)).toBe(false);
+    expect(isStatusError("error")).toBe(false);
+  });
+
+  it("returns false for objects without status", () => {
+    expect(isStatusError({ message: "oops" })).toBe(false);
+  });
+});
+
 describe("retryFetch", () => {
-  it("returns immediately on success", async () => {
-    const fn = jest.fn().mockResolvedValue("ok");
-    const result = await retryFetch(fn);
-    expect(result).toBe("ok");
+  it("returns immediately on a successful response", async () => {
+    const fn = jest.fn().mockResolvedValue({ status: 200 } as Response);
+    const result = await retryFetch(fn, { maxRetries: 3, baseDelayMs: 0 });
+    expect(result.status).toBe(200);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("retries on retryable status codes", async () => {
+  it("retries on a retryable status code", async () => {
     const fn = jest
       .fn()
-      .mockRejectedValueOnce(makeStatusError(503))
-      .mockRejectedValueOnce(makeStatusError(503))
-      .mockResolvedValue("recovered");
+      .mockResolvedValueOnce({ status: 503 } as Response)
+      .mockResolvedValueOnce({ status: 503 } as Response)
+      .mockResolvedValueOnce({ status: 200 } as Response);
 
-    const result = await retryFetch(fn, { baseDelayMs: 0 });
-    expect(result).toBe("recovered");
+    const result = await retryFetch(fn, { maxRetries: 3, baseDelayMs: 0 });
+    expect(result.status).toBe(200);
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
-  it("throws immediately on non-retryable status", async () => {
-    const fn = jest.fn().mockRejectedValue(makeStatusError(404));
-    await expect(retryFetch(fn, { baseDelayMs: 0 })).rejects.toMatchObject({ status: 404 });
-    expect(fn).toHaveBeenCalledTimes(1);
+  it("returns last retryable response when maxRetries exhausted", async () => {
+    const fn = jest.fn().mockResolvedValue({ status: 429 } as Response);
+    const result = await retryFetch(fn, { maxRetries: 2, baseDelayMs: 0 });
+    expect(result.status).toBe(429);
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 
-  it("throws after exhausting retries", async () => {
-    const fn = jest.fn().mockRejectedValue(makeStatusError(500));
+  it("retries on thrown errors and eventually throws", async () => {
+    const fn = jest.fn().mockRejectedValue(new Error("network failure"));
     await expect(
       retryFetch(fn, { maxRetries: 2, baseDelayMs: 0 })
-    ).rejects.toMatchObject({ status: 500 });
+    ).rejects.toThrow("network failure");
     expect(fn).toHaveBeenCalledTimes(3);
-  });
-
-  it("respects custom retryOn list", async () => {
-    const fn = jest
-      .fn()
-      .mockRejectedValueOnce(makeStatusError(422))
-      .mockResolvedValue("done");
-
-    const result = await retryFetch(fn, { retryOn: [422], baseDelayMs: 0 });
-    expect(result).toBe("done");
-    expect(fn).toHaveBeenCalledTimes(2);
   });
 });

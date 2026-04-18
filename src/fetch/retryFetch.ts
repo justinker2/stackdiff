@@ -1,14 +1,16 @@
 export interface RetryOptions {
   maxRetries?: number;
   baseDelayMs?: number;
-  retryOn?: number[];
+  retryOnStatuses?: number[];
 }
+
+const DEFAULT_RETRY_STATUSES = [429, 500, 502, 503, 504];
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isStatusError(err: unknown): err is { status: number } {
+export function isStatusError(err: unknown): err is { status: number } {
   return (
     typeof err === "object" &&
     err !== null &&
@@ -17,33 +19,34 @@ function isStatusError(err: unknown): err is { status: number } {
   );
 }
 
-export async function retryFetch<T>(
-  fn: () => Promise<T>,
+export async function retryFetch(
+  fn: () => Promise<Response>,
   options: RetryOptions = {}
-): Promise<T> {
-  const { maxRetries = 3, baseDelayMs = 200, retryOn = [429, 500, 502, 503, 504] } = options;
+): Promise<Response> {
+  const {
+    maxRetries = 3,
+    baseDelayMs = 200,
+    retryOnStatuses = DEFAULT_RETRY_STATUSES,
+  } = options;
 
-  let lastError: unknown;
+  let attempt = 0;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  while (true) {
+    let response: Response;
     try {
-      return await fn();
+      response = await fn();
     } catch (err) {
-      lastError = err;
-
-      const shouldRetry =
-        attempt < maxRetries &&
-        isStatusError(err) &&
-        retryOn.includes(err.status);
-
-      if (!shouldRetry) {
-        throw err;
-      }
-
-      const delay = baseDelayMs * Math.pow(2, attempt);
-      await sleep(delay);
+      if (attempt >= maxRetries) throw err;
+      attempt++;
+      await sleep(baseDelayMs * 2 ** (attempt - 1));
+      continue;
     }
-  }
 
-  throw lastError;
+    if (!retryOnStatuses.includes(response.status) || attempt >= maxRetries) {
+      return response;
+    }
+
+    attempt++;
+    await sleep(baseDelayMs * 2 ** (attempt - 1));
+  }
 }
