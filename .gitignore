@@ -1,0 +1,12 @@
+node_modules/
+
+.next/
+.cache/
+dist/
+.env.local
+*.tsbuildinfo
+*.swo
+*.swp
+*.js.map
+coverage/
+.env
