@@ -1,63 +1,61 @@
-import { fetchWithRetry } from './retryFetch';
-import * as fetchModule from './fetchResponse';
+import { retryFetch, sleep } from "./retryFetch";
 
-jest.mock('./fetchResponse');
-
-const mockFetchJson = fetchModule.fetchJson as jest.MockedFunction<typeof fetchModule.fetchJson>;
-
-function makeStatusError(status: number): Error & { statusCode: number } {
-  const err = new Error(`HTTP ${status}`) as Error & { statusCode: number };
-  err.statusCode = status;
+export function makeStatusError(status: number): Error & { status: number } {
+  const err = new Error(`HTTP ${status}`) as Error & { status: number };
+  err.status = status;
   return err;
 }
 
-describe('fetchWithRetry', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    jest.useFakeTimers();
+describe("sleep", () => {
+  it("resolves after the given delay", async () => {
+    const start = Date.now();
+    await sleep(50);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+  });
+});
+
+describe("retryFetch", () => {
+  it("returns immediately on success", async () => {
+    const fn = jest.fn().mockResolvedValue("ok");
+    const result = await retryFetch(fn);
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
+  it("retries on retryable status codes", async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(makeStatusError(503))
+      .mockRejectedValueOnce(makeStatusError(503))
+      .mockResolvedValue("recovered");
+
+    const result = await retryFetch(fn, { baseDelayMs: 0 });
+    expect(result).toBe("recovered");
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 
-  it('returns data on first successful attempt', async () => {
-    mockFetchJson.mockResolvedValueOnce({ ok: true });
-    const result = await fetchWithRetry('https://example.com/api');
-    expect(result).toEqual({ ok: true });
-    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+  it("throws immediately on non-retryable status", async () => {
+    const fn = jest.fn().mockRejectedValue(makeStatusError(404));
+    await expect(retryFetch(fn, { baseDelayMs: 0 })).rejects.toMatchObject({ status: 404 });
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('retries on 500 and succeeds', async () => {
-    mockFetchJson
-      .mockRejectedValueOnce(makeStatusError(500))
-      .mockResolvedValueOnce({ recovered: true });
-
-    const promise = fetchWithRetry('https://example.com/api', {}, { delayMs: 10 });
-    await jest.runAllTimersAsync();
-    const result = await promise;
-
-    expect(result).toEqual({ recovered: true });
-    expect(mockFetchJson).toHaveBeenCalledTimes(2);
-  });
-
-  it('throws immediately on non-retryable status code', async () => {
-    mockFetchJson.mockRejectedValueOnce(makeStatusError(404));
-
+  it("throws after exhausting retries", async () => {
+    const fn = jest.fn().mockRejectedValue(makeStatusError(500));
     await expect(
-      fetchWithRetry('https://example.com/api', {}, { retryOn: [500] })
-    ).rejects.toMatchObject({ statusCode: 404 });
-
-    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+      retryFetch(fn, { maxRetries: 2, baseDelayMs: 0 })
+    ).rejects.toMatchObject({ status: 500 });
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 
-  it('throws after exhausting all retries', async () => {
-    mockFetchJson.mockRejectedValue(makeStatusError(503));
+  it("respects custom retryOn list", async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(makeStatusError(422))
+      .mockResolvedValue("done");
 
-    const promise = fetchWithRetry('https://example.com/api', {}, { maxRetries: 2, delayMs: 10 });
-    await jest.runAllTimersAsync();
-
-    await expect(promise).rejects.toMatchObject({ statusCode: 503 });
-    expect(mockFetchJson).toHaveBeenCalledTimes(3);
+    const result = await retryFetch(fn, { retryOn: [422], baseDelayMs: 0 });
+    expect(result).toBe("done");
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });
