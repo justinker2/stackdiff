@@ -5,14 +5,21 @@ export interface TaggedEntry {
   tags: string[];
 }
 
+/**
+ * Converts a glob-style pattern to a RegExp.
+ * Supports `*` as a wildcard and escapes `.` characters.
+ */
+function globToRegExp(pattern: string): RegExp {
+  return new RegExp(
+    '^' + pattern.replace(/\./ g, '\\.').replace(/\*/g, '.*') + '$'
+  );
+}
+
 export function assignTags(path: string, tagMap: TagMap): string[] {
   const tags: string[] = [];
   for (const [tag, patterns] of Object.entries(tagMap)) {
     for (const pattern of patterns) {
-      const re = new RegExp(
-        '^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$'
-      );
-      if (re.test(path)) {
+      if (globToRegExp(pattern).test(path)) {
         tags.push(tag);
         break;
       }
