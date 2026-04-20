@@ -25,6 +25,27 @@ describe('extractShape', () => {
       items: { kind: 'object', fields: { id: { kind: 'primitive', type: 'number' } } },
     });
   });
+
+  it('handles empty arrays', () => {
+    const shape = extractShape([]);
+    expect(shape).toEqual({ kind: 'array', items: null });
+  });
+
+  it('handles nested objects', () => {
+    const shape = extractShape({ user: { id: 1, name: 'Alice' } });
+    expect(shape).toEqual({
+      kind: 'object',
+      fields: {
+        user: {
+          kind: 'object',
+          fields: {
+            id: { kind: 'primitive', type: 'number' },
+            name: { kind: 'primitive', type: 'string' },
+          },
+        },
+      },
+    });
+  });
 });
 
 describe('diffShapes', () => {
@@ -53,5 +74,13 @@ describe('diffShapes', () => {
   it('returns no diffs for identical shapes', () => {
     const shape = extractShape({ ok: true });
     expect(diffShapes(shape, shape)).toHaveLength(0);
+  });
+
+  it('detects changes in nested fields', () => {
+    const left = extractShape({ user: { id: 1 } });
+    const right = extractShape({ user: { id: '1' } });
+    const diffs = diffShapes(left, right);
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0]).toMatchObject({ path: '$.user.id', change: 'type_changed' });
   });
 });
