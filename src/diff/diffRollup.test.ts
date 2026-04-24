@@ -1,72 +1,86 @@
-import { rollupDiff, truncatePath, formatRollupReport } from './diffRollup';
-import type { DiffEntry } from './diffFilter';
+import { truncatePath, rollupDiff, formatRollupReport } from './diffRollup';
+import type { DiffEntry } from './shapeDiff';
 
-function makeEntry(path: string, change: DiffEntry['change']): DiffEntry {
-  return { path, change, left: 'string', right: change === 'removed' ? undefined : 'number' };
+function makeEntry(path: string, change: DiffEntry['change'], a?: string, b?: string): DiffEntry {
+  return { path, change, typeA: a ?? 'string', typeB: b ?? 'string' };
 }
 
 describe('truncatePath', () => {
-  it('returns first N segments', () => {
+  it('returns path unchanged when depth is large', () => {
+    expect(truncatePath('a.b.c.d', 10)).toBe('a.b.c.d');
+  });
+
+  it('truncates to specified depth', () => {
     expect(truncatePath('a.b.c.d', 2)).toBe('a.b');
   });
 
-  it('returns full path when depth exceeds segments', () => {
-    expect(truncatePath('a.b', 5)).toBe('a.b');
+  it('handles single segment', () => {
+    expect(truncatePath('root', 1)).toBe('root');
   });
 
-  it('handles single segment', () => {
-    expect(truncatePath('root', 2)).toBe('root');
+  it('handles depth of zero by returning first segment', () => {
+    expect(truncatePath('a.b.c', 0)).toBe('a');
   });
 });
 
 describe('rollupDiff', () => {
-  const entries: DiffEntry[] = [
-    makeEntry('user.name', 'changed'),
-    makeEntry('user.email', 'added'),
-    makeEntry('user.address.city', 'removed'),
-    makeEntry('product.price', 'changed'),
-    makeEntry('product.sku', 'added'),
-  ];
-
-  it('groups entries by prefix at default depth 2', () => {
-    const result = rollupDiff(entries);
-    expect(result.depth).toBe(2);
-    expect(result.buckets).toHaveLength(2);
-    const user = result.buckets.find((b) => b.prefix === 'user')!;
-    expect(user.total).toBe(3);
-    expect(user.added).toBe(1);
-    expect(user.removed).toBe(1);
-    expect(user.changed).toBe(1);
-  });
-
-  it('respects custom depth', () => {
+  it('groups entries under common prefix at given depth', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('user.name', 'added'),
+      makeEntry('user.email', 'removed'),
+      makeEntry('user.address.city', 'changed', 'string', 'number'),
+    ];
     const result = rollupDiff(entries, 1);
-    expect(result.buckets).toHaveLength(2);
+    expect(result.size).toBe(1);
+    const group = result.get('user')!;
+    expect(group).toHaveLength(3);
   });
 
-  it('returns empty buckets for empty input', () => {
-    const result = rollupDiff([]);
-    expect(result.buckets).toHaveLength(0);
+  it('separates entries with different top-level keys', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('user.name', 'added'),
+      makeEntry('product.sku', 'removed'),
+    ];
+    const result = rollupDiff(entries, 1);
+    expect(result.size).toBe(2);
+    expect(result.has('user')).toBe(true);
+    expect(result.has('product')).toBe(true);
   });
 
-  it('sorts buckets alphabetically', () => {
-    const result = rollupDiff(entries);
-    expect(result.buckets[0].prefix).toBe('product');
-    expect(result.buckets[1].prefix).toBe('user');
+  it('uses deeper depth to distinguish sub-groups', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('a.b.x', 'added'),
+      makeEntry('a.c.y', 'removed'),
+    ];
+    const result = rollupDiff(entries, 2);
+    expect(result.size).toBe(2);
+    expect(result.has('a.b')).toBe(true);
+    expect(result.has('a.c')).toBe(true);
+  });
+
+  it('returns empty map for empty input', () => {
+    expect(rollupDiff([], 1).size).toBe(0);
   });
 });
 
 describe('formatRollupReport', () => {
-  it('returns message for empty result', () => {
-    expect(formatRollupReport({ buckets: [], depth: 2 })).toBe('No differences to roll up.');
+  it('lists each group with a count summary', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('user.name', 'added'),
+      makeEntry('user.email', 'removed'),
+      makeEntry('meta.version', 'changed', 'number', 'string'),
+    ];
+    const rolled = rollupDiff(entries, 1);
+    const report = formatRollupReport(rolled);
+    expect(report).toContain('user');
+    expect(report).toContain('meta');
+    expect(report).toContain('added: 1');
+    expect(report).toContain('removed: 1');
+    expect(report).toContain('changed: 1');
   });
 
-  it('includes depth header and bucket rows', () => {
-    const entries: DiffEntry[] = [makeEntry('a.b', 'added')];
-    const result = rollupDiff(entries, 2);
-    const report = formatRollupReport(result);
-    expect(report).toContain('Rollup at depth 2');
-    expect(report).toContain('+1 added');
-    expect(report).toContain('a');
+  it('returns a message for empty rollup', () => {
+    const report = formatRollupReport(new Map());
+    expect(report).toMatch(/no entries/i);
   });
 });
