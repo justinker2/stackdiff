@@ -1,73 +1,115 @@
-import { detectSentinels, formatSentinelReport, SentinelMatch } from './diffSentinel';
+import { detectKind, detectSentinels, formatSentinelReport } from './diffSentinel';
 import type { DiffEntry } from './shapeDiff';
 
-function makeEntry(path: string, leftValue?: unknown, rightValue?: unknown): DiffEntry & { leftValue?: unknown; rightValue?: unknown } {
-  return { path, change: 'changed', leftType: 'string', rightType: 'string', leftValue, rightValue } as any;
+function makeEntry(path: string, change: DiffEntry['change'], a?: string, b?: string): DiffEntry {
+  return { path, change, typeA: a ?? null, typeB: b ?? null };
 }
 
+describe('detectKind', () => {
+  it('returns null-like for null type', () => {
+    expect(detectKind('null')).toBe('null-like');
+  });
+
+  it('returns null-like for undefined type', () => {
+    expect(detectKind('undefined')).toBe('null-like');
+  });
+
+  it('returns numeric for number type', () => {
+    expect(detectKind('number')).toBe('numeric');
+  });
+
+  it('returns textual for string type', () => {
+    expect(detectKind('string')).toBe('textual');
+  });
+
+  it('returns boolean for boolean type', () => {
+    expect(detectKind('boolean')).toBe('boolean');
+  });
+
+  it('returns object for object type', () => {
+    expect(detectKind('object')).toBe('object');
+  });
+
+  it('returns array for array type', () => {
+    expect(detectKind('array')).toBe('array');
+  });
+
+  it('returns unknown for unrecognised type', () => {
+    expect(detectKind('symbol')).toBe('unknown');
+  });
+
+  it('returns unknown for empty string', () => {
+    expect(detectKind('')).toBe('unknown');
+  });
+});
+
 describe('detectSentinels', () => {
-  it('returns empty array when no sentinels present', () => {
-    const entries = [makeEntry('a.b', 'hello', 'world')];
-    expect(detectSentinels(entries)).toEqual([]);
-  });
-
-  it('detects null on both sides', () => {
-    const entries = [makeEntry('a.b', null, null)];
-    const result = detectSentinels(entries);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ path: 'a.b', side: 'both', kind: 'null' });
-  });
-
-  it('detects empty-string on left only', () => {
-    const entries = [makeEntry('x.y', '', 'real')];
-    const result = detectSentinels(entries);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ path: 'x.y', side: 'left', kind: 'empty-string' });
-  });
-
-  it('detects zero on right only', () => {
-    const entries = [makeEntry('count', 5, 0)];
-    const result = detectSentinels(entries);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ path: 'count', side: 'right', kind: 'zero' });
-  });
-
-  it('detects empty-array on both sides', () => {
-    const entries = [makeEntry('items', [], [])];
-    const result = detectSentinels(entries);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ side: 'both', kind: 'empty-array' });
-  });
-
-  it('detects empty-object on both sides', () => {
-    const entries = [makeEntry('meta', {}, {})];
-    const result = detectSentinels(entries);
-    expect(result[0]).toMatchObject({ kind: 'empty-object', side: 'both' });
-  });
-
-  it('handles multiple entries independently', () => {
-    const entries = [
-      makeEntry('a', null, 'ok'),
-      makeEntry('b', 'fine', ''),
+  it('flags added null-like fields', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('data.token', 'added', undefined, 'null'),
     ];
     const result = detectSentinels(entries);
-    expect(result).toHaveLength(2);
-    expect(result[0]).toMatchObject({ path: 'a', side: 'left',  kind: 'null' });
-    expect(result[1]).toMatchObject({ path: 'b', side: 'right', kind: 'empty-string' });
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe('data.token');
+    expect(result[0].kind).toBe('null-like');
+    expect(result[0].change).toBe('added');
+  });
+
+  it('flags removed numeric fields', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('stats.count', 'removed', 'number', undefined),
+    ];
+    const result = detectSentinels(entries);
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe('numeric');
+  });
+
+  it('ignores unchanged entries', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('user.id', 'unchanged', 'number', 'number'),
+    ];
+    const result = detectSentinels(entries);
+    expect(result).toHaveLength(0);
+  });
+
+  it('handles multiple sentinel entries', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('a', 'added', undefined, 'null'),
+      makeEntry('b', 'removed', 'boolean', undefined),
+      makeEntry('c', 'changed', 'string', 'number'),
+      makeEntry('d', 'unchanged', 'string', 'string'),
+    ];
+    const result = detectSentinels(entries);
+    expect(result).toHaveLength(3);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(detectSentinels([])).toEqual([]);
   });
 });
 
 describe('formatSentinelReport', () => {
-  it('returns a no-sentinel message when list is empty', () => {
-    expect(formatSentinelReport([])).toBe('No sentinel values detected.');
+  it('returns a no-sentinels message for empty list', () => {
+    const out = formatSentinelReport([]);
+    expect(out).toContain('No sentinel');
   });
 
-  it('includes path, side and kind in output', () => {
-    const matches: SentinelMatch[] = [{ path: 'foo.bar', side: 'both', kind: 'null' }];
-    const report = formatSentinelReport(matches);
-    expect(report).toContain('foo.bar');
-    expect(report).toContain('both');
-    expect(report).toContain('null');
-    expect(report).toContain('Total: 1 sentinel(s) found.');
+  it('includes path and kind in output', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('data.flag', 'added', undefined, 'boolean'),
+    ];
+    const sentinels = detectSentinels(entries);
+    const out = formatSentinelReport(sentinels);
+    expect(out).toContain('data.flag');
+    expect(out).toContain('boolean');
+  });
+
+  it('includes change type in output', () => {
+    const entries: DiffEntry[] = [
+      makeEntry('meta.cursor', 'removed', 'string', undefined),
+    ];
+    const sentinels = detectSentinels(entries);
+    const out = formatSentinelReport(sentinels);
+    expect(out).toContain('removed');
   });
 });
