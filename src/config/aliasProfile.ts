@@ -23,8 +23,14 @@ export function loadAliasProfiles(): AliasProfile[] {
   if (!fs.existsSync(filePath)) return [];
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(raw) as AliasProfile[];
-  } catch {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      console.warn(`[aliasProfile] Expected array in ${filePath}, got ${typeof parsed}`);
+      return [];
+    }
+    return parsed as AliasProfile[];
+  } catch (err) {
+    console.warn(`[aliasProfile] Failed to parse ${filePath}:`, err);
     return [];
   }
 }
