@@ -39,3 +39,25 @@ export function formatBreakingMarkdown(report: BreakingReport): string {
   lines.push(`**Status:** ${formatBreakingBadge(report)}`);
   return lines.join("\n");
 }
+
+/**
+ * Returns a plain-text summary of the breaking change report,
+ * suitable for CLI output or log messages.
+ */
+export function formatBreakingPlainText(report: BreakingReport): string {
+  const lines: string[] = [];
+
+  for (const entry of report.breaking) {
+    lines.push(formatBreakingEntry(entry));
+  }
+  for (const entry of report.potentiallyBreaking) {
+    lines.push(formatBreakingEntry(entry));
+  }
+  for (const entry of report.safe) {
+    lines.push(formatBreakingEntry(entry));
+  }
+
+  lines.push("");
+  lines.push(`Status: ${formatBreakingBadge(report)}`);
+  return lines.join("\n");
+}
