@@ -44,12 +44,19 @@ export function runBaselineCommand(args: BaselineArgs, currentEntries?: DiffEntr
       if (!args.name) throw new Error('baseline compare requires a name');
       if (!currentEntries) throw new Error('No current entries to compare');
       const { added, removed, unchanged } = compareToBaseline(args.name, currentEntries);
-      console.log(`Compared to baseline '${args.name}':`);
+      console.log(`Compared to baseline '${args.name}':`);      
       console.log(`  Added:     ${added.length}`);
       console.log(`  Removed:   ${removed.length}`);
       console.log(`  Unchanged: ${unchanged.length}`);
-      added.forEach(e => console.log(`  + ${e.path} (${e.type})`));
-      removed.forEach(e => console.log(`  - ${e.path} (${e.type})`));
+      if (added.length > 0) {
+        added.forEach(e => console.log(`  + ${e.path} (${e.type})`));
+      }
+      if (removed.length > 0) {
+        removed.forEach(e => console.log(`  - ${e.path} (${e.type})`));
+      }
+      if (added.length === 0 && removed.length === 0) {
+        console.log('  No differences from baseline.');
+      }
       break;
     }
   }
